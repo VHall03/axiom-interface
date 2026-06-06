@@ -797,30 +797,6 @@ function saveToStorage(cfg) {
 }
 
 // ═══════════════════════════════════════════════
-//  SHARE URL GENERATION
-// ═══════════════════════════════════════════════
-
-async function generateShareUrl(cfg) {
-  // Build a config safe to share — no raw api key
-  const shareCfg = { ...cfg };
-  delete shareCfg.adminPass; // don't share admin password
-  delete shareCfg.apiKey;    // never share raw key
-
-  // Re-encrypt api key against session password for the URL
-  // (already encrypted in storage, but re-encrypt fresh so
-  //  the URL blob can be validated independently)
-  if (_runtimeApiKey && cfg.sessionPass) {
-    shareCfg.apiKeyEnc = await encryptApiKey(_runtimeApiKey, cfg.sessionPass);
-  } else if (cfg.apiKeyEnc) {
-    shareCfg.apiKeyEnc = cfg.apiKeyEnc;
-  }
-
-  const encoded = btoa(JSON.stringify(shareCfg));
-  const url = `${window.location.origin}${window.location.pathname}?cfg=${encoded}`;
-  return url;
-}
-
-// ═══════════════════════════════════════════════
 //  SCREEN MANAGEMENT
 // ═══════════════════════════════════════════════
 
@@ -998,12 +974,42 @@ async function saveConfig() {
 }
 
 async function copyShareUrl() {
-  const cfg = loadConfig();
+  // Save first so storage is current, then generate from live form state
+  await saveConfig();
+
+  const existing    = loadConfig();
+  const rawApiKey   = document.getElementById('cfg-api-key').value.trim();
+  const sessionPass = document.getElementById('cfg-session-pass').value.trim() || existing.sessionPass;
+
+  // Build shareCfg directly from current form values so nothing is stale
+  const shareCfg = {
+    stationName: document.getElementById('cfg-station-name').value.trim() || existing.stationName,
+    stationSub:  document.getElementById('cfg-station-sub').value.trim(),
+    online:      document.getElementById('cfg-online-yes').checked,
+    sessionPass,
+    // no adminPass — players don't need it
+    model:       document.getElementById('cfg-model').value.trim() || existing.model,
+    temperature: parseFloat(document.getElementById('cfg-temp').value),
+    maxTokens:   parseInt(document.getElementById('cfg-maxtok').value),
+    bootMsg:     document.getElementById('cfg-boot-msg').value.trim(),
+    systemCore:  document.getElementById('cfg-system-core').value.trim(),
+    systemData:  document.getElementById('cfg-system-data').value.trim(),
+    apiKeyEnc:   existing.apiKeyEnc || null,
+  };
+
+  // Re-encrypt with current session pass if a new raw key was typed
+  if (rawApiKey && sessionPass) {
+    shareCfg.apiKeyEnc = await encryptApiKey(rawApiKey, sessionPass);
+  } else if (_runtimeApiKey && sessionPass) {
+    shareCfg.apiKeyEnc = await encryptApiKey(_runtimeApiKey, sessionPass);
+  }
+
   showAdminMsg('GENERATING SHARE URL...');
   try {
-    const url = await generateShareUrl(cfg);
+    const encoded = btoa(JSON.stringify(shareCfg));
+    const url = `${window.location.origin}${window.location.pathname}?cfg=${encoded}`;
     await navigator.clipboard.writeText(url);
-    showAdminMsg('SHARE URL COPIED TO CLIPBOARD — SEND TO PLAYERS');
+    showAdminMsg('SHARE URL COPIED — SEND TO PLAYERS');
   } catch (e) {
     showAdminMsg('CLIPBOARD FAILED: ' + e.message.toUpperCase(), true);
   }
