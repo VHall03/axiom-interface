@@ -232,28 +232,33 @@
     .msg:last-child { border-bottom: none; }
 
     .msg-label {
-      font-size: 0.65rem;
+      font-family: var(--font-display);
+      font-size: 1rem;
       letter-spacing: 0.15em;
       color: var(--amber-dim);
-      padding-top: 0.15rem;
+      padding-top: 0.05rem;
       flex-shrink: 0;
+      text-shadow: 0 0 8px rgba(232,160,32,0.2);
     }
 
-    .msg-user .msg-label { color: #5a6a3a; }
+    .msg-user .msg-label { color: #5a6a3a; text-shadow: none; }
 
     .msg-content {
       color: var(--amber);
-      font-size: 0.88rem;
+      font-family: var(--font-display);
+      font-size: 1.05rem;
       white-space: pre-wrap;
       word-break: break-word;
+      text-shadow: 0 0 10px rgba(232,160,32,0.25);
     }
 
-    .msg-user .msg-content { color: #8a9a5a; }
+    .msg-user .msg-content { color: #8a9a5a; text-shadow: 0 0 8px rgba(138,154,90,0.2); }
 
     .msg-system .msg-content {
       color: var(--amber-dim);
-      font-size: 0.75rem;
+      font-size: 0.95rem;
       letter-spacing: 0.05em;
+      text-shadow: none;
     }
 
     .cursor {
@@ -281,10 +286,12 @@
     }
 
     .input-prefix {
-      font-size: 0.75rem;
+      font-family: var(--font-display);
+      font-size: 1.1rem;
       letter-spacing: 0.1em;
       color: var(--amber-dim);
       flex-shrink: 0;
+      text-shadow: 0 0 10px rgba(232,160,32,0.3);
     }
 
     .term-input {
@@ -292,10 +299,11 @@
       background: transparent;
       border: none;
       color: #8a9a5a;
-      font-family: var(--font-mono);
-      font-size: 0.88rem;
+      font-family: var(--font-display);
+      font-size: 1.1rem;
       outline: none;
       caret-color: var(--amber);
+      text-shadow: 0 0 8px rgba(138,154,90,0.4);
     }
 
     .term-input::placeholder { color: var(--amber-dim); opacity: 0.5; }
@@ -305,29 +313,21 @@
       background: transparent;
       border: 1px solid var(--border);
       color: var(--amber-dim);
-      font-family: var(--font-mono);
-      font-size: 0.65rem;
+      font-family: var(--font-display);
+      font-size: 1rem;
       letter-spacing: 0.15em;
-      padding: 0.3rem 0.75rem;
+      padding: 0.1rem 0.75rem;
       cursor: pointer;
       transition: all 0.1s;
       text-transform: uppercase;
       flex-shrink: 0;
+      text-shadow: 0 0 8px rgba(232,160,32,0.2);
     }
 
-    .send-btn:hover:not(:disabled) { border-color: var(--amber); color: var(--amber); }
+    .send-btn:hover:not(:disabled) { border-color: var(--amber); color: var(--amber); text-shadow: 0 0 10px rgba(232,160,32,0.5); }
     .send-btn:disabled { opacity: 0.3; cursor: not-allowed; }
 
-    .term-footer {
-      padding: 0.3rem 1.5rem;
-      border-top: 1px solid var(--border-bright);
-      display: flex;
-      justify-content: space-between;
-      font-size: 0.6rem;
-      letter-spacing: 0.15em;
-      color: var(--amber-dim);
-      flex-shrink: 0;
-    }
+    .term-footer { display: none; }
 
     /* ── ADMIN SCREEN ────────────────────────── */
     #screen-admin {
