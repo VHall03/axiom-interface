@@ -544,6 +544,7 @@
       <input type="password" class="lock-input" id="lock-pass" placeholder="— — — — — —" autocomplete="off" />
       <button class="lock-btn" onclick="tryUnlock()">AUTHENTICATE</button>
       <div class="lock-error" id="lock-error"></div>
+      <div id="lock-expiry" style="font-size:0.55rem; letter-spacing:0.15em; color:var(--amber-dim); margin-top:0.25rem;"></div>
     </div>
 
     <div id="lock-code-view" style="display:flex; flex-direction:column; align-items:center; gap:0.4rem; margin-top:0.75rem; width:280px;">
@@ -632,6 +633,9 @@
 
         <div class="admin-label">Session password <span>(players enter this)</span></div>
         <input type="text" class="admin-input" id="cfg-session-pass" placeholder="e.g. DELTA-NINE" autocomplete="off" />
+
+        <div class="admin-label" style="margin-top:0.5rem;">Session expiry <span>(hours from code generation, blank = no limit)</span></div>
+        <input type="number" class="admin-input" id="cfg-expiry-hours" placeholder="6" min="0" step="0.5" style="width:6rem;" />
 
         <div class="admin-label" style="margin-top:0.5rem;">Admin password <span>(this panel)</span></div>
         <input type="password" class="admin-input" id="cfg-admin-pass" placeholder="Change admin password" autocomplete="off" />
@@ -781,18 +785,18 @@ async function decodeConfigCode(code) {
 const STORAGE_KEY = 'shipterm_config';
 
 const DEFAULT_CONFIG = {
-  stationName: 'AXIOM-7',
-  stationSub:  'SHIPBOARD INTELLIGENCE INTERFACE',
-  online:      false,
-  sessionPass: '',
-  adminPass:   'ADMIN',
-  apiKeyEnc:   null,   // { enc, salt, iv } — encrypted blob
-  model:       'anthropic/claude-3-haiku-20240307',
-  temperature: 0.7,
-  maxTokens:   600,
-  bootMsg:     'INTERFACE ONLINE.\nREADY FOR QUERY.',
-  systemCore:  '',
-  systemData:  '',
+  stationName:  'AXIOM-7',
+  stationSub:   'SHIPBOARD INTELLIGENCE INTERFACE',
+  sessionPass:  '',
+  adminPass:    'ADMIN',
+  apiKeyEnc:    null,
+  model:        'anthropic/claude-3-haiku-20240307',
+  temperature:  0.7,
+  maxTokens:    600,
+  bootMsg:      'INTERFACE ONLINE.\nREADY FOR QUERY.',
+  systemCore:   '',
+  systemData:   '',
+  expiryHours:  6,    // null = no limit; baked into code as validUntil timestamp
 };
 
 // In-memory plaintext API key — set on session start, never written to disk
@@ -835,6 +839,26 @@ function initLockScreen() {
   document.getElementById('lock-session-view').style.display = hasConfig ? 'flex' : 'none';
   document.getElementById('cfg-code-input').value = '';
   document.getElementById('cfg-code-error').textContent = '';
+
+  // Show expiry info
+  const expiryEl = document.getElementById('lock-expiry');
+  if (expiryEl) {
+    if (hasConfig && cfg.validUntil != null) {
+      const msLeft = cfg.validUntil - Date.now();
+      if (msLeft <= 0) {
+        expiryEl.textContent = 'SESSION EXPIRED';
+        expiryEl.style.color = 'var(--red, #c0392b)';
+      } else {
+        const hLeft = Math.floor(msLeft / 3600000);
+        const mLeft = Math.floor((msLeft % 3600000) / 60000);
+        expiryEl.textContent = `CODE VALID FOR ${hLeft}H ${mLeft}M`;
+        expiryEl.style.color = '';
+      }
+    } else {
+      expiryEl.textContent = '';
+    }
+  }
+
   if (hasConfig) document.getElementById('lock-pass').focus();
 }
 
@@ -853,6 +877,13 @@ async function tryUnlock() {
     errEl.textContent = 'AUTHENTICATION FAILED';
     document.getElementById('lock-pass').value = '';
     document.getElementById('lock-pass').focus();
+    return;
+  }
+
+  // Check expiry
+  if (cfg.validUntil != null && Date.now() > cfg.validUntil) {
+    errEl.textContent = 'SESSION EXPIRED — REQUEST A NEW CODE FROM OPERATOR';
+    document.getElementById('lock-pass').value = '';
     return;
   }
 
@@ -923,6 +954,7 @@ function openAdminPanel() {
   document.getElementById('cfg-station-name').value = cfg.stationName;
   document.getElementById('cfg-station-sub').value  = cfg.stationSub;
   document.getElementById('cfg-session-pass').value = cfg.sessionPass;
+  document.getElementById('cfg-expiry-hours').value  = cfg.expiryHours ?? '';
   document.getElementById('cfg-admin-pass').value   = '';
   // Show placeholder if key is already stored encrypted
   document.getElementById('cfg-api-key').value      = '';
@@ -969,6 +1001,9 @@ async function saveConfig() {
     stationSub:  document.getElementById('cfg-station-sub').value.trim(),
     sessionPass,
     adminPass:   newAdminPass || existing.adminPass,
+    expiryHours: document.getElementById('cfg-expiry-hours').value !== ''
+                   ? parseFloat(document.getElementById('cfg-expiry-hours').value)
+                   : null,
     apiKeyEnc,
     model:       document.getElementById('cfg-model').value.trim(),
     temperature: parseFloat(document.getElementById('cfg-temp').value),
@@ -996,6 +1031,10 @@ async function copyShareCode() {
   const rawApiKey   = document.getElementById('cfg-api-key').value.trim();
   const sessionPass = document.getElementById('cfg-session-pass').value.trim() || existing.sessionPass;
 
+  const expiryHours = document.getElementById('cfg-expiry-hours').value !== ''
+    ? parseFloat(document.getElementById('cfg-expiry-hours').value)
+    : null;
+
   const shareCfg = {
     stationName: document.getElementById('cfg-station-name').value.trim() || existing.stationName,
     stationSub:  document.getElementById('cfg-station-sub').value.trim(),
@@ -1007,6 +1046,9 @@ async function copyShareCode() {
     systemCore:  document.getElementById('cfg-system-core').value.trim(),
     systemData:  document.getElementById('cfg-system-data').value.trim(),
     apiKeyEnc:   existing.apiKeyEnc || null,
+    validUntil:  expiryHours != null
+                   ? Date.now() + expiryHours * 60 * 60 * 1000
+                   : null,
   };
 
   if (rawApiKey && sessionPass) {
@@ -1171,6 +1213,16 @@ async function sendMessage() {
   if (!text) return;
 
   const cfg = loadConfig();
+
+  // Expiry check — boot back to lock if session has expired
+  if (cfg.validUntil != null && Date.now() > cfg.validUntil) {
+    _runtimeApiKey = '';
+    stopClock();
+    showScreen('screen-lock');
+    initLockScreen();
+    document.getElementById('lock-error').textContent = 'SESSION EXPIRED — REQUEST A NEW CODE FROM OPERATOR';
+    return;
+  }
 
   if (!_runtimeApiKey) {
     appendMessage('system', 'ERROR', 'NO API KEY LOADED. CONTACT OPERATOR.');
