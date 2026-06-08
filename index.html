@@ -539,21 +539,20 @@
     <div class="lock-sub" id="lock-station-sub">SHIPBOARD INTELLIGENCE — AUTHORISED ACCESS ONLY</div>
     <div class="lock-separator"></div>
 
-    <div id="lock-offline-view" class="lock-offline" style="display:none;">
-      <div class="lock-sub"><span class="status-dot"></span>INTERFACE OFFLINE</div>
-      <div class="lock-sub" style="font-size:0.65rem; max-width:260px; text-align:center; line-height:1.8;">
-        This terminal is currently offline. Contact your operator for access.
-      </div>
-      <button class="lock-btn" style="font-size:0.6rem; opacity:0.5;" onclick="showAdminLock()">ADMIN</button>
-    </div>
-
-    <div id="lock-online-view" class="lock-form">
+    <div id="lock-session-view" class="lock-form" style="display:none;">
       <div class="lock-prompt">ENTER SESSION CODE</div>
       <input type="password" class="lock-input" id="lock-pass" placeholder="— — — — — —" autocomplete="off" />
       <button class="lock-btn" onclick="tryUnlock()">AUTHENTICATE</button>
       <div class="lock-error" id="lock-error"></div>
-      <button class="nav-link" style="margin-top:0.5rem;" onclick="showAdminLock()">ADMIN</button>
     </div>
+
+    <div id="lock-code-view" style="display:flex; flex-direction:column; align-items:center; gap:0.4rem; margin-top:0.75rem; width:280px;">
+      <input type="text" class="lock-input" id="cfg-code-input" placeholder="PASTE CONFIG CODE" autocomplete="off" style="font-size:0.6rem; letter-spacing:0.05em;" />
+      <button class="lock-btn" style="font-size:0.6rem;" onclick="loadConfigCode()">LOAD CONFIG</button>
+      <div class="lock-error" id="cfg-code-error"></div>
+    </div>
+
+    <button class="nav-link" style="margin-top:0.75rem; font-size:0.6rem; opacity:0.5;" onclick="showAdminLock()">ADMIN</button>
   </div>
 
   <!-- ══ ADMIN LOCK SCREEN ══════════════════════════════════════ -->
@@ -631,19 +630,7 @@
         <div class="admin-label">Access Control</div>
         <hr class="divider" />
 
-        <div class="admin-label">Terminal status</div>
-        <div style="display:flex; gap:1rem; align-items:center; padding: 0.25rem 0;">
-          <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer; font-size:0.75rem;">
-            <input type="radio" name="cfg-online" id="cfg-online-yes" value="true" />
-            <span style="letter-spacing:0.1em;">ONLINE</span>
-          </label>
-          <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer; font-size:0.75rem;">
-            <input type="radio" name="cfg-online" id="cfg-online-no" value="false" checked />
-            <span style="letter-spacing:0.1em;">OFFLINE</span>
-          </label>
-        </div>
-
-        <div class="admin-label" style="margin-top:0.5rem;">Session password <span>(players enter this)</span></div>
+        <div class="admin-label">Session password <span>(players enter this)</span></div>
         <input type="text" class="admin-input" id="cfg-session-pass" placeholder="e.g. DELTA-NINE" autocomplete="off" />
 
         <div class="admin-label" style="margin-top:0.5rem;">Admin password <span>(this panel)</span></div>
@@ -706,7 +693,7 @@
       <div class="admin-msg" id="admin-msg"></div>
       <div id="admin-share-row" style="display:flex; gap:0.75rem; flex-wrap:wrap; justify-content:flex-end;">
         <button class="admin-save-btn" onclick="clearConfig()">RESET ALL</button>
-        <button class="admin-save-btn" onclick="copyShareUrl()" title="Generates a URL with encrypted config for players to load">COPY PLAYER URL</button>
+        <button class="admin-save-btn" onclick="copyShareCode()" title="Generates a compressed config code for players to paste">COPY CONFIG CODE</button>
         <button class="admin-save-btn primary" onclick="saveConfig()">SAVE CONFIG</button>
       </div>
     </div>
@@ -761,7 +748,32 @@ async function decryptApiKey(encObj, password) {
 }
 
 // ═══════════════════════════════════════════════
-//  CONFIG & STORAGE
+//  ENCODE / DECODE CONFIG CODE
+//  JSON → gzip → base64 for compact share codes
+// ═══════════════════════════════════════════════
+
+async function encodeConfigCode(obj) {
+  const json    = JSON.stringify(obj);
+  const bytes   = new TextEncoder().encode(json);
+  const stream  = new CompressionStream('gzip');
+  const writer  = stream.writable.getWriter();
+  writer.write(bytes);
+  writer.close();
+  const compressed = await new Response(stream.readable).arrayBuffer();
+  return btoa(String.fromCharCode(...new Uint8Array(compressed)));
+}
+
+async function decodeConfigCode(code) {
+  const binary     = Uint8Array.from(atob(code), c => c.charCodeAt(0));
+  const stream     = new DecompressionStream('gzip');
+  const writer     = stream.writable.getWriter();
+  writer.write(binary);
+  writer.close();
+  const decompressed = await new Response(stream.readable).arrayBuffer();
+  return JSON.parse(new TextDecoder().decode(decompressed));
+}
+
+
 //  apiKey is stored/shared in encrypted form only.
 //  The decrypted key lives in memory for the session.
 // ═══════════════════════════════════════════════
@@ -788,12 +800,6 @@ let _runtimeApiKey = '';
 
 function loadConfig() {
   try {
-    // Check URL first — players load via share link
-    const urlParam = new URLSearchParams(window.location.search).get('cfg');
-    if (urlParam) {
-      const fromUrl = JSON.parse(decodeURIComponent(escape(atob(urlParam))));
-      return { ...DEFAULT_CONFIG, ...fromUrl };
-    }
     const raw = localStorage.getItem(STORAGE_KEY);
     return raw ? { ...DEFAULT_CONFIG, ...JSON.parse(raw) } : { ...DEFAULT_CONFIG };
   } catch { return { ...DEFAULT_CONFIG }; }
@@ -825,13 +831,11 @@ function initLockScreen() {
   document.getElementById('lock-station-name').textContent = cfg.stationName;
   document.getElementById('lock-station-sub').textContent  = cfg.stationSub;
 
-  if (cfg.online) {
-    document.getElementById('lock-online-view').style.display  = 'flex';
-    document.getElementById('lock-offline-view').style.display = 'none';
-  } else {
-    document.getElementById('lock-online-view').style.display  = 'none';
-    document.getElementById('lock-offline-view').style.display = 'flex';
-  }
+  const hasConfig = !!(cfg.sessionPass);
+  document.getElementById('lock-session-view').style.display = hasConfig ? 'flex' : 'none';
+  document.getElementById('cfg-code-input').value = '';
+  document.getElementById('cfg-code-error').textContent = '';
+  if (hasConfig) document.getElementById('lock-pass').focus();
 }
 
 async function tryUnlock() {
@@ -875,6 +879,10 @@ document.getElementById('lock-pass').addEventListener('keydown', e => {
   if (e.key === 'Enter') tryUnlock();
 });
 
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && document.activeElement?.id === 'cfg-code-input') loadConfigCode();
+});
+
 // ═══════════════════════════════════════════════
 //  ADMIN LOCK
 // ═══════════════════════════════════════════════
@@ -914,8 +922,6 @@ function openAdminPanel() {
 
   document.getElementById('cfg-station-name').value = cfg.stationName;
   document.getElementById('cfg-station-sub').value  = cfg.stationSub;
-  document.getElementById('cfg-online-yes').checked = cfg.online === true;
-  document.getElementById('cfg-online-no').checked  = cfg.online !== true;
   document.getElementById('cfg-session-pass').value = cfg.sessionPass;
   document.getElementById('cfg-admin-pass').value   = '';
   // Show placeholder if key is already stored encrypted
@@ -961,7 +967,6 @@ async function saveConfig() {
     ...existing,
     stationName: document.getElementById('cfg-station-name').value.trim() || 'AXIOM-7',
     stationSub:  document.getElementById('cfg-station-sub').value.trim(),
-    online:      document.getElementById('cfg-online-yes').checked,
     sessionPass,
     adminPass:   newAdminPass || existing.adminPass,
     apiKeyEnc,
@@ -983,21 +988,18 @@ async function saveConfig() {
     : 'sk-or-...';
 }
 
-async function copyShareUrl() {
-  // Save first so storage is current, then generate from live form state
+async function copyShareCode() {
+  // Save first so storage is current
   await saveConfig();
 
   const existing    = loadConfig();
   const rawApiKey   = document.getElementById('cfg-api-key').value.trim();
   const sessionPass = document.getElementById('cfg-session-pass').value.trim() || existing.sessionPass;
 
-  // Build shareCfg directly from current form values so nothing is stale
   const shareCfg = {
     stationName: document.getElementById('cfg-station-name').value.trim() || existing.stationName,
     stationSub:  document.getElementById('cfg-station-sub').value.trim(),
-    online:      document.getElementById('cfg-online-yes').checked,
     sessionPass,
-    // no adminPass — players don't need it
     model:       document.getElementById('cfg-model').value.trim() || existing.model,
     temperature: parseFloat(document.getElementById('cfg-temp').value),
     maxTokens:   parseInt(document.getElementById('cfg-maxtok').value),
@@ -1007,22 +1009,39 @@ async function copyShareUrl() {
     apiKeyEnc:   existing.apiKeyEnc || null,
   };
 
-  // Re-encrypt with current session pass if a new raw key was typed
   if (rawApiKey && sessionPass) {
     shareCfg.apiKeyEnc = await encryptApiKey(rawApiKey, sessionPass);
   } else if (_runtimeApiKey && sessionPass) {
     shareCfg.apiKeyEnc = await encryptApiKey(_runtimeApiKey, sessionPass);
   }
 
-  showAdminMsg('GENERATING SHARE URL...');
+  showAdminMsg('GENERATING CONFIG CODE...');
   try {
-    const json    = JSON.stringify(shareCfg);
-    const encoded = btoa(unescape(encodeURIComponent(json)));
-    const url = `${window.location.origin}${window.location.pathname}?cfg=${encoded}`;
-    await navigator.clipboard.writeText(url);
-    showAdminMsg('SHARE URL COPIED — SEND TO PLAYERS');
+    const code = await encodeConfigCode(shareCfg);
+    await navigator.clipboard.writeText(code);
+    showAdminMsg('CONFIG CODE COPIED — SEND TO PLAYERS');
   } catch (e) {
     showAdminMsg('CLIPBOARD FAILED: ' + e.message.toUpperCase(), true);
+  }
+}
+
+async function loadConfigCode() {
+  const input = document.getElementById('cfg-code-input');
+  const errEl = document.getElementById('cfg-code-error');
+  const code  = input?.value?.trim();
+  if (!code) return;
+
+  try {
+    const parsed  = await decodeConfigCode(code);
+    const merged  = { ...DEFAULT_CONFIG, ...parsed };
+    const toStore = { ...merged };
+    delete toStore.apiKey;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore));
+    input.value = '';
+    errEl.textContent = '';
+    initLockScreen();
+  } catch {
+    errEl.textContent = 'INVALID CODE';
   }
 }
 
@@ -1030,8 +1049,6 @@ function clearConfig() {
   if (!confirm('Reset all configuration to defaults? This cannot be undone.')) return;
   localStorage.removeItem(STORAGE_KEY);
   _runtimeApiKey = '';
-  // Strip URL params
-  window.history.replaceState({}, '', window.location.pathname);
   openAdminPanel();
   showAdminMsg('CONFIGURATION RESET');
 }
